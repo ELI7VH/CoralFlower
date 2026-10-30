@@ -12,7 +12,7 @@ The original nine modes remain available.
 
 | Page | K1 | K2 | K3 | K4 |
 | --- | --- | --- | --- | --- |
-| Pattern | On/off | Mode | Octave lift (1 = original) | Rate |
+| Pattern | On/off | Mode | Octave lift (1 = original) | Rate (straight / triplet / dotted, through 1/64) |
 | Feel | Tempo | Gate | Swing | Latch |
 | Shape | Starter preset | Steps (1–64) | Direction | Wrap / octave |
 | Draw | Step | Chord row (1–8) | Note length (1–64 steps) | Add / remove note |
@@ -95,3 +95,22 @@ not a CPU stress guarantee. The agent did not physically listen to the device.
 
 TEST is left stopped, SHAYPE selected/enabled, with no keys held. SHOW remains Switch Blade chain14;
 GHOUL was untouched. Screens above are emulator renders; no hardware screenshot claim is made.
+
+## Rate extension — wlshape2
+
+RATE now offers **21 divisions**: each of 1/1, 1/2, 1/4, 1/8, 1/16, 1/32 and 1/64,
+in straight, triplet (`T`) and dotted (`D`) forms. Dotted lasts 1.5 times the straight duration;
+triplets last 2/3. The knob runs slow to fast, ending with 1/64T. Saved rate IDs 0–8 keep their
+original meanings; new IDs are appended, so existing settings need no conversion. The extension
+also works with the original clocked arp modes; Strum retains milliseconds.
+
+The arp now uses a separate 96 PPQN grid. Native sequencing and MIDI clock out retain 24 PPQN.
+Incoming MIDI clock anchors the fine grid every pulse; interpolation fills the interval at the
+followed tempo, clamped before the next pulse. Clock fallback holds until its phase catches up.
+The sample-based free-running path uses the same exact rational periods. Rate changes rejoin
+the next grid slot without resetting the pattern/pass. No song or SHAYPE storage format change.
+
+Validation: core parity, **1,854 integration/timing checks**, 134 backup checks and focused UBSan
+pass. Checks cover all rate pairs with swing, labels/menu ordering, exact 64th durations,
+MIDI pulse anchoring/interpolation/fallback and the unchanged native 24 PPQN grid. Target build
+guards pass. These timing checks do not establish CPU headroom for every sound/pattern combination.

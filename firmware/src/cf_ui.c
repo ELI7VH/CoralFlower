@@ -87,7 +87,8 @@ static const char *const CF_ARP_SHORT[CF_ARP_NMODES] = {"Up", "Down", "Incl", "E
 static const char *const CF_ARP_NAME[CF_ARP_NMODES] = {"Up", "Down", "Inclusive", "Exclusive", "Random", "Order",
                                                        "Repeat", "Strum up", "Strum down", "SHAYPE"};
 static const char *const CF_ARP_RATE[CF_ARP_NRATES] = {"1/1", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T",
-                                                       "1/32"};
+                                                       "1/32", "1/1T", "1/2T", "1/32T", "1/64", "1/64T",
+                                                       "1/1D", "1/2D", "1/4D", "1/8D", "1/16D", "1/32D", "1/64D"};
 
 /* SHAYPE editor: each cell can hold a note, edited with CoralFlower's four knobs. */
 static uint8_t cfsh_step, cfsh_row, cfsh_len = 1;
@@ -590,7 +591,7 @@ static void ui_knob_turn(int k, int d)
             else if (CF_ARP_STRUMMING(cs.arp.mode))
                 cs.arp.strum_ms = (uint8_t)clampi(cs.arp.strum_ms + d * (cs.arp.strum_ms < 40 ? 1 : 5), 5, 250);
             else
-                cs.arp.rate = (uint8_t)clampi(cs.arp.rate + d, 0, (int)CF_ARP_NRATES - 1);
+                cs.arp.rate = (uint8_t)cfa_rate_turn(cs.arp.rate, d);
         } else {
             if (k == 0 && !cf_sn.ext_clock) {
                 cs.bpm = (uint16_t)clampi(cs.bpm + d, 30, 300);

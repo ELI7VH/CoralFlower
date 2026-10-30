@@ -91,7 +91,7 @@ typedef struct {
 
 /* the beat grid the arpeggiator locks to while the metronome's clock runs (cf_out.c cfm_tick writes it): on, where it
  * is in 1/24 beats (a MIDI clock's pulses), gen: + 1 when it starts again from beat 1 */
-static struct { uint8_t on; uint32_t g24, gen; } cf_grid;
+static struct { uint8_t on; uint32_t g24, gen, g96; } cf_grid;
 
 static uint32_t cf_now_ms, cf_ms_rem;                /* the engine clock: audio samples -> ms (cf_out.c) */
 static cf_chord_t cfc;                               /* the chord model: the ISR's */

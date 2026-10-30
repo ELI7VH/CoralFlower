@@ -300,6 +300,7 @@ static struct {
     uint32_t last_ms;            /* the last one (cf_now_ms) */
     uint8_t active;              /* pulses within the last 300 ms */
     uint16_t bpm;                /* the tempo they make (0: none yet) */
+    uint32_t subpulse;           /* samples x bpm since the last received pulse, arp interpolation only */
 } cfx_in;
 
 static void cfm_tick(uint32_t n, uint32_t pulses)
@@ -317,7 +318,13 @@ static void cfm_tick(uint32_t n, uint32_t pulses)
     }
     if (cfx_in.active) {                         /* the clock's pulses: FS x 60 / 24 each */
         cfm.acc += pulses * (FS * 60u / 24u);
+        if (pulses) cfx_in.subpulse = 0;
+        else {
+            cfx_in.subpulse += n * cfm.bpm;
+            if (cfx_in.subpulse >= FS * 60u / 24u) cfx_in.subpulse = FS * 60u / 24u - 1u;
+        }
     } else {
+        cfx_in.subpulse = 0;
         cfm.acc += n * cfm.bpm;
     }
     for (k = 0; k < 4u && cfm.acc >= FS * 60u; k++) {
@@ -334,6 +341,16 @@ static void cfm_tick(uint32_t n, uint32_t pulses)
     cf_grid.g24 = cfm.beats_done * 24u + cfm.acc / (FS * 60u / 24u);   /* (FS x 60 / 24 is whole: acc x 24 / (FS x 60)
                                                                           * without a 64-bit division, which the
                                                                           * device has none of) */
+    /* 96 PPQN for fine arp divisions; the native sequencer and outgoing MIDI keep 24 PPQN.
+     * Between incoming MIDI pulses interpolate at the followed tempo, stopping short of the next
+     * pulse. The next received pulse always advances, even if it arrives early or late. */
+    {
+        uint32_t next = cfm.beats_done * 96u +
+            ((cfm.acc + (cfx_in.active ? cfx_in.subpulse : 0u)) * 4u) / (FS * 60u / 24u);
+        /* Loss of MIDI clock may fall back behind the interpolated fraction. Hold until caught up. */
+        if (cf_grid.on && (int32_t)(next - cf_grid.g96) < 0) next = cf_grid.g96;
+        cf_grid.g96 = next;
+    }
 }
 /* MIDI clock out (CLOCK Out): while the beat runs (PLAY, the sequencer), 24 pulses a beat on the metronome's
  * own grid (cf_grid.g24: a beat's first pulse is its downbeat), a start when it begins, a stop when it ends. USB MIDI
@@ -372,6 +389,8 @@ static void cfm_restart(void)
     cfm.acc = 0;
     cfm.beat = 0;
     cfm.beats_done = 0;
+    cfx_in.subpulse = 0;
+    cf_grid.g96 = 0;
     cf_grid.gen++;
 }
 

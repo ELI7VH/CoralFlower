@@ -10,15 +10,28 @@
  * LATCH: the notes go on when the keys are let go; new keys change them. The bass part is left as it is (held under
  * the arpeggio), latched with it.
  * A chord that changes while the pattern runs takes its place in it (the step count goes on); one that starts from
- * silence starts the pattern on its first note, at once. Step times are exact (1/24-beat units against samples x
+ * silence starts the pattern on its first note, at once. Step times are exact (1/96-beat units against samples x
  * BPM, a 64-bit count: no drift). */
 
 enum { CF_ARP_UP, CF_ARP_DOWN, CF_ARP_INC, CF_ARP_EXC, CF_ARP_RAND, CF_ARP_ORDER, CF_ARP_REPEAT, CF_ARP_STRUM_UP,
        CF_ARP_STRUM_DOWN, CF_ARP_SHAYPE, CF_ARP_NMODES };
 #define CF_ARP_STRUMMING(m) ((m) == CF_ARP_STRUM_UP || (m) == CF_ARP_STRUM_DOWN)
-/* RATE: a step, in 1/24 beat (a quarter note: 24) */
-static const uint8_t CF_ARP_UNITS[] = {96, 48, 24, 16, 12, 8, 6, 4, 3};
-#define CF_ARP_NRATES ((uint32_t)sizeof CF_ARP_UNITS)
+/* Stored IDs 0..8 retain their old meanings; append new rates. A quarter = 96 ticks. */
+static const uint16_t CF_ARP_UNITS[] = {384, 192, 96, 64, 48, 32, 24, 16, 12,
+                                      256, 128, 8, 6, 4, 576, 288, 144, 72, 36, 18, 9};
+#define CF_ARP_NRATES ((uint32_t)(sizeof CF_ARP_UNITS / sizeof CF_ARP_UNITS[0]))
+/* Slow to fast; dotted, straight, triplet for each binary division. IDs are not menu positions. */
+static const uint8_t CF_ARP_ORDER_RATE[] = {14, 0, 15, 9, 1, 16, 10, 2, 17, 3, 4, 18, 5, 6, 19, 7, 8, 20, 11, 12, 13};
+static uint32_t cfa_rate_turn(uint32_t id, int d)
+{
+    uint32_t i;
+    int at;
+    for (i = 0; i < CF_ARP_NRATES && CF_ARP_ORDER_RATE[i] != id; i++);
+    at = (int)(i < CF_ARP_NRATES ? i : 10u) + d;
+    if (at < 0) at = 0;
+    if (at >= (int)CF_ARP_NRATES) at = (int)CF_ARP_NRATES - 1;
+    return CF_ARP_ORDER_RATE[at];
+}
 #define CF_ARP_MAX 48u                               /* notes in the pattern: 12 tones x 4 octaves */
 
 typedef struct {
@@ -30,7 +43,7 @@ typedef struct {
     uint32_t idx;                                    /* steps played since the pattern started */
     uint8_t cur;                                     /* the note sounding (0: none) */
     uint32_t gate_left;                              /* samples until it is let go */
-    uint64_t acc;                                    /* samples x BPM x 2400 since the last step */
+    uint64_t acc;                                    /* samples x BPM x 9600 since the last step */
     uint8_t rnd_last;
     uint32_t rng;
     /* Strum */
@@ -39,8 +52,8 @@ typedef struct {
     /* for the screen */
     uint8_t steps;                                   /* bumped at every note played */
     uint8_t last_note;                               /* the last note played */
-    /* locked to the beat (cf_grid on): the next step's place on the grid (1/24 beats), the grid's gen it is on */
-    uint32_t next24, gen;
+    /* locked to the beat (cf_grid on): the next step's place on the grid (1/96 beats), the grid's gen it is on */
+    uint32_t next96, gen;
     uint8_t locked;
     uint8_t shnote[ARP_ROWS], shheld[CF_MAX_NOTES], shn, shrelease, rate, swing;
     uint32_t shleft[ARP_ROWS];
@@ -60,7 +73,7 @@ static uint32_t cfa_part(void) { return cfa.part == 0xFFu ? cfp_cp : cfa.part; }
 static uint32_t cfa_bpm(void) { return cfp_cfg.bpm >= 30u && cfp_cfg.bpm <= 300u ? cfp_cfg.bpm : 120u; }
 static uint32_t cfa_oct(void) { return cfp_cfg.arp.oct >= 1u && cfp_cfg.arp.oct <= 4u ? cfp_cfg.arp.oct : 1u; }
 
-/* the step about to come, in samples x BPM x 2400: the RATE's length, a pair's first stretched by SWING */
+/* the step about to come, in samples x BPM x 9600: the RATE's length, a pair's first stretched by SWING */
 static uint64_t cfa_step_len(uint32_t idx)
 {
     uint32_t u = CF_ARP_UNITS[cfp_cfg.arp.rate < CF_ARP_NRATES ? cfp_cfg.arp.rate : 4u];
@@ -168,7 +181,7 @@ static uint32_t cfa_next_place(uint32_t g)           /* the first step place aft
     return r < s ? m * p + s : (m + 1u) * p;
 }
 
-/* one step of the clocked modes; len: its length (samples x BPM x 2400), for its gate */
+/* one step of the clocked modes; len: its length (samples x BPM x 9600), for its gate */
 /* n / d with a 32-bit divisor, without a 64-bit division: the device's toolchain (pi32v2) has no __udivdi3 (nor
  * __divdi3), so no code here may divide a 64-bit value at run time. Long division bit by bit; a quotient that does not
  * fit 32 bits saturates */
@@ -199,7 +212,7 @@ static void cfa_shape_step(uint64_t len)
 {
     uint8_t pitch[ARP_ROWS], length[ARP_ROWS];
     uint32_t step = cfa.idx % cfp_shape.steps, i, j, k, t;
-    uint32_t g = cfp_cfg.arp.gate, st = cfa_div64(len, cfa_bpm() * 2400u);
+    uint32_t g = cfp_cfg.arp.gate, st = cfa_div64(len, cfa_bpm() * 9600u);
     if (cfa.shrelease && (cfp_shape.attach != AA_CYCLE || !step)) {
         cfa.shrelease = 2;                /* finish active gates without starting another pass */
         return;
@@ -226,7 +239,7 @@ static void cfa_shape_step(uint64_t len)
         if (j == ARP_ROWS) continue;             /* bounded polyphony; never overwrite a live gate */
         samples = st;
         for (t = 1; t < length[i]; t++)
-            samples += cfa_div64(cfa_step_len(cfa.idx - 1u + t), cfa_bpm() * 2400u);
+            samples += cfa_div64(cfa_step_len(cfa.idx - 1u + t), cfa_bpm() * 9600u);
         samples = samples / 100u * g + samples % 100u * g / 100u;
         cfa.shnote[j] = (uint8_t)nt;
         cfa.shleft[j] = samples ? samples : 1u;
@@ -246,9 +259,9 @@ static void cfa_step_n(uint64_t len)
         return;
     cfa.cur = (uint8_t)nt;
     cfa_play((uint32_t)nt);
-    /* the gate in samples: the step's (len / (BPM x 2400)) x GATE % (a full gate lets go just as the next comes) */
+    /* the gate in samples: the step's (len / (BPM x 9600)) x GATE % (a full gate lets go just as the next comes) */
     {
-        uint32_t st = cfa_div64(len, cfa_bpm() * 2400u);   /* (the step in samples; x GATE % without overflow) */
+        uint32_t st = cfa_div64(len, cfa_bpm() * 9600u);   /* (the step in samples; x GATE % without overflow) */
         cfa.gate_left = st / 100u * g + st % 100u * g / 100u;
     }
     if (g >= 100u)
@@ -262,7 +275,7 @@ static void cfa_lock_from(uint32_t g)
     uint32_t nx = cfa_next_place(g), u = cfa_pair() / 2u;
     if (nx - g < (u + 2u) / 3u)
         nx = cfa_next_place(nx);
-    cfa.next24 = nx;
+    cfa.next96 = nx;
     cfa.gen = cf_grid.gen;
     cfa.locked = 1;
 }
@@ -347,8 +360,8 @@ static int cfa_chord(const cf_chord_out_t *o, int m)
         cfa.idx = 0;
         cfa.acc = 0;
         if (cf_grid.on) {
-            cfa_lock_from(cf_grid.g24);
-            cfa_step_n((uint64_t)(cfa.next24 - cf_grid.g24) * FS * 60u * 100u);
+            cfa_lock_from(cf_grid.g96);
+            cfa_step_n((uint64_t)(cfa.next96 - cf_grid.g96) * FS * 60u * 100u);
         } else {
             cfa.locked = 0;
             cfa_step();
@@ -416,18 +429,18 @@ static void cfa_tick(uint32_t n)
     if (cfa.rate != cfp_cfg.arp.rate || cfa.swing != cfp_cfg.arp.swing) {
         cfa.rate = cfp_cfg.arp.rate;
         cfa.swing = cfp_cfg.arp.swing;
-        if (cf_grid.on) cfa.next24 = cfa_next_place(cf_grid.g24);
+        if (cf_grid.on) cfa.next96 = cfa_next_place(cf_grid.g96);
     }
     if (cf_grid.on) {                                /* locked to the beat: the steps on the grid's places */
-        uint32_t g = cf_grid.g24;
-        if (!cfa.locked || cfa.gen != cf_grid.gen || cfa.next24 > g + 4u * cfa_pair()) {
+        uint32_t g = cf_grid.g96;
+        if (!cfa.locked || cfa.gen != cf_grid.gen || cfa.next96 > g + 4u * cfa_pair()) {
             cfa_lock_from(g);                        /* (the grid started again, or the lock is new: its next place) */
             return;
         }
-        if (g >= cfa.next24) {
+        if (g >= cfa.next96) {
             uint32_t nx = cfa_next_place(g);
             cfa_step_n((uint64_t)(nx - g) * FS * 60u * 100u);
-            cfa.next24 = nx;
+            cfa.next96 = nx;
         }
         return;
     }
@@ -435,7 +448,7 @@ static void cfa_tick(uint32_t n)
         cfa.locked = 0;
         cfa.acc = 0;
     }
-    cfa.acc += (uint64_t)n * cfa_bpm() * 2400u;
+    cfa.acc += (uint64_t)n * cfa_bpm() * 9600u;
     /* the wait is the length of the step just played (idx - 1: a pair's first is the long one with SWING); at most
      * one step a block, a step being longer than a block */
     if (cfa.idx && cfa.acc >= cfa_step_len(cfa.idx - 1u)) {

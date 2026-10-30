@@ -25,6 +25,39 @@ static int sounding(int note)
 int main(void)
 {
     emu_flash_open(); memset(emu_flash, 0xFF, sizeof emu_flash); cr_bank_boot(); cf_ui_init();
+    CHECK(CF_ARP_NRATES == 21, "straight, triplet and dotted divisions for seven note values");
+    for (unsigned i = 0; i < CF_ARP_NRATES; i++) {
+        CHECK(CF_ARP_RATE[i] && CF_ARP_UNITS[i], "rate %u has a label and nonzero period", i);
+        if (i) CHECK(CF_ARP_UNITS[CF_ARP_ORDER_RATE[i-1]] > CF_ARP_UNITS[CF_ARP_ORDER_RATE[i]], "knob rates run slow to fast");
+        CHECK(cfa_rate_turn(CF_ARP_ORDER_RATE[i], 0) == CF_ARP_ORDER_RATE[i], "stored ID maps to knob position");
+        if (i+1 < CF_ARP_NRATES) CHECK(cfa_rate_turn(CF_ARP_ORDER_RATE[i], 1) == CF_ARP_ORDER_RATE[i+1], "knob reaches next rate");
+    }
+    CHECK(CF_ARP_UNITS[12] == 6 && CF_ARP_UNITS[13] == 4 && CF_ARP_UNITS[20] == 9, "64th periods: straight 6, triplet 4, dotted 9 ticks");
+    reset_shape(); cfp_cfg.arp.rate = 12;
+    CHECK(cfa_div64(cfa_step_len(0), 120u * 9600u) == FS / 32u, "64th gate duration at 120 BPM");
+    cfp_cfg.arp.rate = 13;
+    CHECK(cfa_div64(cfa_step_len(0), 120u * 9600u) == FS / 48u, "64th triplet gate duration at 120 BPM");
+    cfp_cfg.arp.rate = 20;
+    CHECK(cfa_div64(cfa_step_len(0), 120u * 9600u) == FS * 3u / 64u, "64th dotted gate duration at 120 BPM");
+    /* 96 PPQN interpolation does not alter native 24 PPQN and stays monotonic through pulse jitter. */
+    cfm.on = 0; cfm.running = 1; cfm.bpm = 120; cfx_in.active = 1; cfm_restart();
+    cfm_tick(0, 0); uint32_t origin = cf_grid.g96, last = origin;
+    for (unsigned pulse = 0; pulse < 48; pulse++) {
+        for (unsigned block = 0; block < (pulse & 1 ? 9u : 7u); block++) {
+            cfm_tick(CTL, 0);
+            CHECK(cf_grid.g96 >= last, "interpolated MIDI phase advances monotonically"); last = cf_grid.g96;
+            CHECK(cf_grid.g96 / 4u == cf_grid.g24, "interpolated phase stays within the native MIDI pulse");
+        }
+        cfm_tick(0, 1);
+        CHECK(cf_grid.g96 == origin + 4u * (pulse+1u), "MIDI pulse anchors exactly four arp ticks"); last = cf_grid.g96;
+    }
+    cfx_in.active = 0; cfm_tick(CTL, 0);
+    CHECK(cf_grid.g96 >= last, "fallback from external clock never runs arp phase backwards");
+    cfm_restart(); cfm_tick(0,0); origin=cf_grid.g96;
+    for (unsigned sample = 0; sample < FS / 2u; sample++) cfm_tick(1,0);
+    CHECK(cf_grid.g96 == origin + 96u, "internal 120 BPM quarter is exactly 96 arp ticks");
+    CHECK(cf_grid.g24 == cf_grid.g96 / 4u, "native sequencer remains on its 24 PPQN grid");
+    cfm.running = 0; cf_grid.on = 0;
     reset_shape(); chord();
     CHECK(cfa.idx == 1 && sounding(60) && sounding(67), "default step starts two chord rows");
     cfa_step();
@@ -46,11 +79,11 @@ int main(void)
     CHECK(cfa.shheld[0] == 60, "CYCLE keeps the old chord for the current pass");
     while (cfa.idx <= 4) cfa_step();
     CHECK(cfa.shheld[0] == 62, "CYCLE attaches the next chord at the pass boundary");
-    reset_shape(); chord(); cf_grid.on = 1; cf_grid.g24 = 37; cfa.locked = 1; cfa.gen = cf_grid.gen;
-    cfa.rate = cfp_cfg.arp.rate; cfa.swing = 50; cfa.next24 = 48; cfa.idx = 7;
+    reset_shape(); chord(); cf_grid.on = 1; cf_grid.g96 = 148; cfa.locked = 1; cfa.gen = cf_grid.gen;
+    cfa.rate = cfp_cfg.arp.rate; cfa.swing = 50; cfa.next96 = 192; cfa.idx = 7;
     cfp_cfg.arp.rate = 6; cfa_tick(1);
-    CHECK(cfa.idx == 7 && cfa.next24 == 42, "rate change joins next grid slot without resetting the pattern");
-    cf_grid.g24 = 42; cfa_tick(1);
+    CHECK(cfa.idx == 7 && cfa.next96 == 168, "rate change joins next grid slot without resetting the pattern");
+    cf_grid.g96 = 168; cfa_tick(1);
     CHECK(cfa.idx == 8, "new rate fires at the joined slot");
     reset_shape(); chord(); cfp_shape.attach = AA_NOTE; cfa_chord(&o, 0);
     CHECK(sounding(60), "NOTE release lets the sounding gate finish");
@@ -60,10 +93,10 @@ int main(void)
     CHECK(!cfa.n && !sounding(60), "NOW release stops immediately");
     for (unsigned sw = 50; sw <= 75; sw += 25) for (unsigned old = 0; old < CF_ARP_NRATES; old++)
         for (unsigned rate = 0; rate < CF_ARP_NRATES; rate++) {
-            reset_shape(); chord(); cf_grid.on = 1; cf_grid.g24 = 37;
+            reset_shape(); chord(); cf_grid.on = 1; cf_grid.g96 = 148;
             cfa.locked = 1; cfa.gen = cf_grid.gen; cfa.rate = old; cfa.swing = sw;
             cfp_cfg.arp.rate = rate; cfp_cfg.arp.swing = sw;
-            cfa.next24 = 96; cfa.idx = 23; cfa_tick(1);
+            cfa.next96 = 384; cfa.idx = 23; cfa_tick(1);
             CHECK(cfa.idx == 23, "rate %u -> %u swing %u retains cycle position", old, rate, sw);
         }
     reset_shape(); cfa_stop(); cfa_at = &cfa_sq[0]; cfa.on = 1; chord(); sqp.on = 1;
