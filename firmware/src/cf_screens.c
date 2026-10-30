@@ -399,10 +399,10 @@ static void draw_generic(void)
         break;
     }
     case SCR_ARP: {                              /* the mode; Pattern and Feel; the pattern pictured */
-        static const char *const PG[2] = {"Pattern", "Feel"};
+        static const char *const PG[5] = {"Pattern", "Feel", "Shape", "Draw", "Attach"};
         static const char *const H[2] = {"SELECT", "page"};
         draw_head(CF_ARP_NAME[cs.arp.mode % CF_ARP_NMODES]);
-        draw_pager(cu.page[SCR_ARP] & 1, 2, 1, PG[cu.page[SCR_ARP] & 1]);
+        draw_pager(cu.page[SCR_ARP], (int)screen_pages(SCR_ARP), 1, PG[cu.page[SCR_ARP]]);
         fb_text_r(&CF_FONT_UI, 234, HEAD_LINE, cu.arp_on ? (cf_grid_shown() ? "on the beat" : "on") : "off",
                   cu.arp_on ? C_ACC(1) : FL_INK3, 1);
         draw_view(view_arp);

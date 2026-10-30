@@ -635,6 +635,49 @@ static void cfk_flush(void)
     }
 }
 
+/* SHAYPE is a separate versioned A/B object. The upstream settings log stays byte-compatible. */
+#define CFSH_MAGIC 0x31534857u             /* WHS1 */
+typedef struct { uint32_t magic, check; cf_shape_t s; } cfsh_rec_t;
+static uint32_t cfsh_saved, cfsh_seen, cfsh_changed, cfsh_retry;
+static uint8_t cfsh_restore_lock;
+static int cfsh_valid(const cfsh_rec_t *r)
+{
+    uint32_t i;
+    if (r->magic != CFSH_MAGIC || r->check != cfs_fnv(&r->s, sizeof r->s) ||
+        !r->s.steps || r->s.steps > ARP_STEPS || r->s.dir > AD_SHYFT || r->s.bound > AB_OCT ||
+        r->s.attach > AA_CYCLE || r->s.root < -1 || r->s.preset >= ARP_NFACTORY || r->s.pat.n > ARP_NMAX)
+        return 0;
+    for (i = 0; i < r->s.pat.n; i++)
+        if (r->s.pat.note[i] & 0x8000u) return 0;
+    return 1;
+}
+static void cfsh_load(void)
+{
+    cfsh_rec_t r;
+    cfsh_defaults(&cfsh);
+    if (!cr_safe && st_load(OBJ_CFSHAPE, &r, sizeof r) == sizeof r && cfsh_valid(&r)) cfsh = r.s;
+    cfsh_saved = cfsh_seen = cfs_fnv(&cfsh, sizeof cfsh);
+}
+static int cfsh_write(void)
+{
+    cfsh_rec_t r;
+    if (cfsh_restore_lock) return 1;
+    r.magic = CFSH_MAGIC; r.s = cfsh; r.check = cfs_fnv(&r.s, sizeof r.s);
+    if (st_save(OBJ_CFSHAPE, &r, sizeof r)) return 1;
+    cfsh_saved = r.check;
+    return 0;
+}
+static void cfsh_poll(uint32_t now, int quiet)
+{
+    uint32_t h = cfs_fnv(&cfsh, sizeof cfsh);
+    if (h != cfsh_seen) { cfsh_seen = h; cfsh_changed = now; }
+    if (h != cfsh_saved && !cfsh_restore_lock && quiet && now - cfsh_changed >= 1500u &&
+        (int32_t)(now - cfsh_retry) >= 0) {
+        cfsh_retry = now + 1000u;
+        if (cfsh_write()) cf_message("SHAYPE save: retry");
+    }
+}
+
 /* every UI frame (main.c's main loop): a change, once it has rested, goes to flash; a quiet moment tidies it */
 static void settings_poll(void)
 {
@@ -651,6 +694,7 @@ static void settings_poll(void)
         cfs_seen = h;
         cfs_changed_ms = now;
     }
+    cfsh_poll(now, now - cfs_sound_ms >= CF_SET_SILENT_MS);
     cfk_poll(now, now - cfs_sound_ms >= CF_SET_SILENT_MS);   /* (the sounds' edits) */
     cfps_poll(now, now - cfs_sound_ms >= CF_SET_SILENT_MS);   /* (the patterns' own sounds) */
     if (cfs_retry_ms && (int32_t)(now - cfs_retry_ms) < 0)

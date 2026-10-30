@@ -14,8 +14,8 @@
  * BPM, a 64-bit count: no drift). */
 
 enum { CF_ARP_UP, CF_ARP_DOWN, CF_ARP_INC, CF_ARP_EXC, CF_ARP_RAND, CF_ARP_ORDER, CF_ARP_REPEAT, CF_ARP_STRUM_UP,
-       CF_ARP_STRUM_DOWN, CF_ARP_NMODES };
-#define CF_ARP_STRUMMING(m) ((m) >= CF_ARP_STRUM_UP)
+       CF_ARP_STRUM_DOWN, CF_ARP_SHAYPE, CF_ARP_NMODES };
+#define CF_ARP_STRUMMING(m) ((m) == CF_ARP_STRUM_UP || (m) == CF_ARP_STRUM_DOWN)
 /* RATE: a step, in 1/24 beat (a quarter note: 24) */
 static const uint8_t CF_ARP_UNITS[] = {96, 48, 24, 16, 12, 8, 6, 4, 3};
 #define CF_ARP_NRATES ((uint32_t)sizeof CF_ARP_UNITS)
@@ -42,6 +42,10 @@ typedef struct {
     /* locked to the beat (cf_grid on): the next step's place on the grid (1/24 beats), the grid's gen it is on */
     uint32_t next24, gen;
     uint8_t locked;
+    uint8_t shnote[ARP_ROWS], shheld[CF_MAX_NOTES], shn, shrelease, rate, swing;
+    uint32_t shleft[ARP_ROWS];
+    int32_t shofs;
+
 } cfa_t;
 /* the keys' arpeggiator, and the sequencer's CHORDS and LAYER tracks' (ARP in a track's editor: the owner,
  * 2026-10-19, "ARP у дорожки"; the same settings, the ARP page's). The functions below work on cfa, the one cfa_at
@@ -121,9 +125,21 @@ static void cfa_strum_off(void)
         }
     cfa.sn = cfa.si = 0;
 }
+static void cfa_shape_off(void)
+{
+    uint32_t i;
+    for (i = 0; i < ARP_ROWS; i++)
+        if (cfa.shleft[i]) {
+            if (cfa_at == &cfa_k) cfp_off(cfa_part(), cfa.shnote[i]);
+            else sqp_off(cfa_part(), cfa.shnote[i]);
+            cfa.shleft[i] = 0;
+        }
+}
 static void cfa_stop(void)                           /* everything the arpeggiator plays lets go */
 {
     cfa_note_off();
+    cfa_shape_off();
+    cfa.shn = cfa.shrelease = 0;
     cfa_strum_off();
     cfa.n = 0;
     cfa.latched = 0;
@@ -173,9 +189,56 @@ static uint32_t cfa_div64(uint64_t n, uint32_t d)
     return q;
 }
 
+/* One SHAYPE step can start eight distinct pitches with independent lengths. */
+static uint32_t cfa_shape_random(void)
+{
+    cfa.rng = cfa.rng * 1664525u + 1013904223u;
+    return cfa.rng;
+}
+static void cfa_shape_step(uint64_t len)
+{
+    uint8_t pitch[ARP_ROWS], length[ARP_ROWS];
+    uint32_t step = cfa.idx % cfp_shape.steps, i, j, k, t;
+    uint32_t g = cfp_cfg.arp.gate, st = cfa_div64(len, cfa_bpm() * 2400u);
+    if (cfa.shrelease && (cfp_shape.attach != AA_CYCLE || !step)) {
+        cfa.shrelease = 2;                /* finish active gates without starting another pass */
+        return;
+    }
+    if (!cfa.shn || cfp_shape.attach != AA_CYCLE || !step)
+        cfa.shn = (uint8_t)ash_voicing(cfa.note, cfa.n, cfp_shape.root, cfa.shheld);
+    if (!step)
+        cfa.shofs = ash_offset(&cfp_shape.pat, cfp_shape.steps, cfa.idx / cfp_shape.steps,
+                              cfa.shn, cfp_shape.dir, cfa_shape_random);
+    k = ash_events(&cfp_shape.pat, step, cfa.shheld, cfa.shn, cfa.shofs,
+                   ash_bound(cfp_shape.dir, cfp_shape.bound), pitch, length);
+    cfa.idx++;
+    for (i = 0; i < k; i++) {
+        uint32_t nt = pitch[i] + 12u * (cfp_cfg.arp.oct - 1u), samples;
+        if (nt > 127u) continue;
+        for (j = 0; j < ARP_ROWS; j++)
+            if (cfa.shleft[j] && cfa.shnote[j] == nt) {
+                if (cfa_at == &cfa_k) cfp_off(cfa_part(), nt); else sqp_off(cfa_part(), nt);
+                cfa.shleft[j] = 0;
+                break;
+            }
+        if (j == ARP_ROWS)
+            for (j = 0; j < ARP_ROWS && cfa.shleft[j]; j++);
+        if (j == ARP_ROWS) continue;             /* bounded polyphony; never overwrite a live gate */
+        samples = st;
+        for (t = 1; t < length[i]; t++)
+            samples += cfa_div64(cfa_step_len(cfa.idx - 1u + t), cfa_bpm() * 2400u);
+        samples = samples / 100u * g + samples % 100u * g / 100u;
+        cfa.shnote[j] = (uint8_t)nt;
+        cfa.shleft[j] = samples ? samples : 1u;
+        cfa_play(nt);
+    }
+}
+
 static void cfa_step_n(uint64_t len)
 {
-    int nt = cfa_pick(cfa.idx);
+    int nt;
+    if (cfp_cfg.arp.mode == CF_ARP_SHAYPE) { cfa_shape_step(len); return; }
+    nt = cfa_pick(cfa.idx);
     uint32_t g = cfp_cfg.arp.gate >= 20u && cfp_cfg.arp.gate <= 100u ? cfp_cfg.arp.gate : 70u;
     cfa_note_off();
     cfa.idx++;
@@ -231,14 +294,25 @@ static int cfa_chord(const cf_chord_out_t *o, int m)
     int i, j, fresh;
     if (!cfa.on)
         return 0;
+    if (cfa.mode != cfp_cfg.arp.mode &&
+        (cfa.mode == CF_ARP_SHAYPE || cfp_cfg.arp.mode == CF_ARP_SHAYPE ||
+         CF_ARP_STRUMMING(cfa.mode) != CF_ARP_STRUMMING(cfp_cfg.arp.mode))) {
+        cfa_note_off(); cfa_shape_off(); cfa_strum_off();
+        cfa.n = cfa.shn = cfa.shrelease = 0;
+    }
     if (!m) {
         if (cfp_cfg.arp.latch && cfa.n) {            /* LATCH: the chord goes on */
             cfa.latched = 1;
             return 1;
         }
+        if (cfp_cfg.arp.mode == CF_ARP_SHAYPE && cfa.n && cfp_shape.attach != AA_NOW) {
+            cfa.shrelease = 1;
+            return 1;
+        }
         cfa_stop();
         return 1;
     }
+    cfa.shrelease = 0;
     fresh = !cfa.n || cfa.latched;
     cfa.latched = 0;
     cfa.n = (uint8_t)(m > CF_MAX_NOTES ? CF_MAX_NOTES : m);
@@ -280,8 +354,25 @@ static int cfa_chord(const cf_chord_out_t *o, int m)
             cfa_step();
         }
     }
+    if (!fresh && cfp_cfg.arp.mode == CF_ARP_SHAYPE && cfp_shape.attach == AA_NOW) {
+        cfa_shape_off();
+        if (cfa.idx) cfa.idx--;
+        cfa_step();
+    }
     cfa.mode = cfp_cfg.arp.mode;
     return 1;
+}
+
+static void cfa_mode_sync(void)
+{
+    if (CF_ARP_STRUMMING(cfp_cfg.arp.mode) != CF_ARP_STRUMMING(cfa.mode) ||
+        (cfp_cfg.arp.mode == CF_ARP_SHAYPE) != (cfa.mode == CF_ARP_SHAYPE)) {
+        cfa_note_off(); cfa_shape_off(); cfa_strum_off();
+        cfa.shn = cfa.shrelease = 0;
+        cfa.mode = cfp_cfg.arp.mode;
+        if (cfa.n && CF_ARP_STRUMMING(cfa.mode)) cfa_strum_start();
+        else if (cfa.n) { cfa.idx = 0; cfa.acc = 0; cfa_step(); }
+    }
 }
 
 /* every audio block: the clocked steps and their gates, the strum's next notes */
@@ -289,6 +380,7 @@ static void cfa_tick(uint32_t n)
 {
     if (!cfa.on || !cfa.n)
         return;
+    cfa_mode_sync();
     if (CF_ARP_STRUMMING(cfp_cfg.arp.mode)) {
         uint32_t gap = cfp_cfg.arp.strum_ms >= 5u ? cfp_cfg.arp.strum_ms : 40u;
         while (cfa.si < cfa.sn && (int32_t)(cf_now_ms - cfa.sdue) >= 0) {
@@ -299,11 +391,32 @@ static void cfa_tick(uint32_t n)
         }
         return;
     }
+    if (cfp_cfg.arp.mode == CF_ARP_SHAYPE) {
+        uint32_t i;
+        for (i = 0; i < ARP_ROWS; i++)
+            if (cfa.shleft[i]) {
+                if (cfa.shleft[i] <= n) {
+                    if (cfa_at == &cfa_k) cfp_off(cfa_part(), cfa.shnote[i]);
+                    else sqp_off(cfa_part(), cfa.shnote[i]);
+                    cfa.shleft[i] = 0;
+                } else cfa.shleft[i] -= n;
+            }
+        if (cfa.shrelease && (cfp_shape.attach != AA_CYCLE || cfa.shrelease == 2u)) {
+            for (i = 0; i < ARP_ROWS && !cfa.shleft[i]; i++);
+            if (i == ARP_ROWS) cfa_stop();
+            return;
+        }
+    }
     if (cfa.cur) {
         if (cfa.gate_left <= n)
             cfa_note_off();
         else
             cfa.gate_left -= n;
+    }
+    if (cfa.rate != cfp_cfg.arp.rate || cfa.swing != cfp_cfg.arp.swing) {
+        cfa.rate = cfp_cfg.arp.rate;
+        cfa.swing = cfp_cfg.arp.swing;
+        if (cf_grid.on) cfa.next24 = cfa_next_place(cf_grid.g24);
     }
     if (cf_grid.on) {                                /* locked to the beat: the steps on the grid's places */
         uint32_t g = cf_grid.g24;
@@ -343,21 +456,7 @@ static void cfa_config(int keys_down)
     }
     if (!cfa.on)
         return;
-    if (CF_ARP_STRUMMING(cfp_cfg.arp.mode) != CF_ARP_STRUMMING(cfa.mode)) {
-        uint8_t n = cfa.n, latched = cfa.latched;
-        cfa_note_off();
-        cfa_strum_off();
-        cfa.n = n;
-        cfa.latched = latched;
-        cfa.mode = cfp_cfg.arp.mode;
-        if (cfa.n && CF_ARP_STRUMMING(cfa.mode))
-            cfa_strum_start();
-        else if (cfa.n) {
-            cfa.idx = 0;
-            cfa.acc = 0;
-            cfa_step();
-        }
-    }
+    cfa_mode_sync();
     if (!cfp_cfg.arp.latch && cfa.latched && !keys_down)
         cfa_stop();
 }

@@ -107,6 +107,8 @@ static int sqp_holds(uint32_t part, uint32_t note)
     if (part == 0u || part == 2u) {              /* (a track's arpeggiator: the notes it sounds) */
         const cfa_t *a = &cfa_sq[part == 2u];
         if (a->on && a->n) {
+            for (i = 0; i < ARP_ROWS; i++)
+                if (a->shleft[i] && a->shnote[i] == note) return 1;
             if (a->cur == note)
                 return 1;
             for (i = 0; i < a->sn; i++)

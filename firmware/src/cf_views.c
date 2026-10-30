@@ -1245,8 +1245,40 @@ static int cv_arp_k(int mode, int len, int i)   /* the arpeggiator's walk (cf_ar
     default: return i % len;
     }
 }
+/* SHAYPE uses the same palette, fonts, header and knob cards as CoralFlower. */
+static void view_shape(int x0)
+{
+    uint32_t i, step, row, start, cols = cfsh.steps < 16u ? cfsh.steps : 16u;
+    int xa = x0 + 16, yt = VIEW_Y + 1, cw = 192 / (int)cols;
+    uint32_t cursor = cu.page[SCR_ARP] == 3 ? cfsh_step :
+                      cf_sn.arp_idx ? (cf_sn.arp_idx - 1u) % cfsh.steps : 0u;
+    start = cursor / 16u * 16u;
+    for (row = 0; row < ARP_ROWS; row++) {
+        char b[2] = {(char)('1' + row), 0};
+        fb_text(&CF_FONT_MICRO, x0 + 5, yt + (7 - row) * 7 - 1, b, FL_INK3, 1);
+        fb_hline(xa, yt + (7 - row) * 7 + 5, cw * cols, FL_BG3);
+    }
+    for (step = 0; step <= cols; step++) fb_vline(xa + step * cw, yt, 55, FL_BG3);
+    for (i = 0; i < cfsh.pat.n; i++) {
+        uint32_t a = ARP_STEP(cfsh.pat.note[i]), b = a + ARP_LEN(cfsh.pat.note[i]);
+        row = ARP_ROW(cfsh.pat.note[i]);
+        if (a >= cfsh.steps || b <= start || a >= start + cols) continue;
+        if (b > cfsh.steps) b = cfsh.steps;
+        if (b > start + cols) b = start + cols;
+        if (a < start) a = start;
+        fb_rbox(xa + (a - start) * cw + 1, yt + (7 - row) * 7 + 1, (b - a) * cw - 2, 4, 1, C_ACC(1));
+    }
+    if (cu.page[SCR_ARP] == 3) {
+        int x = xa + (cursor - start) * cw, y = yt + (7 - cfsh_row) * 7;
+        fb_hline(x, y, cw, C_ACC(0)); fb_hline(x, y + 6, cw, C_ACC(0));
+        fb_vline(x, y, 7, C_ACC(0)); fb_vline(x + cw - 1, y, 7, C_ACC(0));
+    } else if (cf_sn.arp_on && cf_sn.arp_n) fb_rect(xa + (cursor - start) * cw, yt + 57, cw - 1, 2, C_ACC(0));
+    fb_text_halo(&CF_FONT_UI, x0 + 6, VIEW_Y + 62,
+                 cu.page[SCR_ARP] == 3 ? "K4: note on/off" : "SHAYPE / WaveLoop / chord rows", FL_INK3, FL_BG, 1);
+}
 static void view_arp(int x0)
 {
+    if (cs.arp.mode == CF_ARP_SHAYPE) { view_shape(x0); return; }
     const int mode = cs.arp.mode % CF_ARP_NMODES, run = cf_sn.arp_on && cf_sn.arp_n;
     int n, i, oc = cs.arp.oct >= 1 && cs.arp.oct <= 4 ? cs.arp.oct : 1, len, lo = 127, hi = 0, sw = 12;
     int xa = x0 + 12, yt = VIEW_Y + 2, h = 40, cur = run ? (int)((cf_sn.arp_idx + 15u) % 16u) : -1;

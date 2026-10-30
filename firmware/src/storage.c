@@ -48,6 +48,7 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
        OBJ_CFPSND,                             /* .. the patterns' own sounds (0.5, cf_settings.c): 0xCA000 / 0xCB000 */
        OBJ_CFTWK0,                             /* .. eight tweaked pattern sounds (0.5, cf_settings.c): 0xCC000 .. 0xDBFFF */
        OBJ_CFTWK7 = OBJ_CFTWK0 + 7,
+       OBJ_CFSHAPE,                            /* SHAYPE: unused CZ pair A0000/A1000 (CZ disabled) */
 #endif
        OBJ_COUNT
 #endif
@@ -102,6 +103,8 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
         return 0xA2000u + (obj - OBJ_CZBANK0) * 2u * ST_SECTOR + copy * ST_SECTOR;
 #endif
 #if defined(CF_LOOP_STORE) && !FELUCCA_CZ
+    if (obj == OBJ_CFSHAPE)
+        return 0xA0000u + copy * ST_SECTOR;
     if (obj == OBJ_CFLOOP)
         return 0xB6000u + copy * ST_SECTOR;
     if (obj >= OBJ_CFSEQ0 && obj <= OBJ_CFSEQ5)

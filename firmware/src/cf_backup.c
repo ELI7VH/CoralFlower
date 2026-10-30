@@ -42,12 +42,13 @@ enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72 };
 #define CFB_SEQ 50u                                  /* 50..55: the sequencer's six objects (OBJ_CFSEQ0..5) */
 #define CFB_EDIT 56u                                 /* 56..58: the sounds' unsaved edits (OBJ_CFEDIT0..2) */
 #define CFB_PSND 59u                                 /* 59: the patterns' own sounds (OBJ_CFPSND, 0.5) */
+#define CFB_SHAPE 68u                              /* WaveLoop SHAYPE pattern/config */
 #define CFB_TWK 60u                                  /* 60..67: the tweaked pattern sounds (OBJ_CFTWK0..7, 0.5) */
 static const uint8_t CRB_IDS[] = {6, 7, 8, CRB_VA, CRB_FM6S, CRB_FM6S + 1u, CFB_SET, CFB_LOOP,
                                   CFB_SEQ, CFB_SEQ + 1u, CFB_SEQ + 2u, CFB_SEQ + 3u, CFB_SEQ + 4u, CFB_SEQ + 5u,
                                   CFB_EDIT, CFB_EDIT + 1u, CFB_EDIT + 2u, CFB_PSND,
                                   CFB_TWK, CFB_TWK + 1u, CFB_TWK + 2u, CFB_TWK + 3u, CFB_TWK + 4u, CFB_TWK + 5u,
-                                  CFB_TWK + 6u, CFB_TWK + 7u};
+                                  CFB_TWK + 6u, CFB_TWK + 7u, CFB_SHAPE};
 _Static_assert(SQ_NCHUNK == 6u, "backup: one id per sequencer object");
 #define CRB_N ((uint32_t)sizeof CRB_IDS)
 /* an FM6 bank of earlier firmware, as fm6_bank.c fm6_bank_import takes it at boot: Felucca 1.0's (27 records, version
@@ -149,6 +150,7 @@ static int crb_index(uint32_t id)
 }
 static uint32_t crb_obj(uint32_t id)                 /* storage.c's object of an id */
 {
+    if (id == CFB_SHAPE) return OBJ_CFSHAPE;
     if (id == CFB_SET)
         return CF_SET_OBJ;
     if (id == CFB_LOOP)
@@ -199,6 +201,8 @@ static void crb_list(void)
 {
     uint32_t i, crc[CRB_N];
     st_hdr_t h;
+    if (!cr_safe && !cfs_restore_lock && !cfsh_restore_lock && cfs_fnv(&cfsh, sizeof cfsh) != cfsh_saved)
+        cfsh_write();
     if (!cr_safe && !cfs_restore_lock && cfs_fnv(&cs, sizeof cs) != cfs_saved)
         cf_settings_write(0);                        /* a change not yet saved goes in first .. */
     if (!cr_safe && !cfs_restore_lock && sq_dirty)
@@ -257,6 +261,7 @@ static void crb_get(const uint8_t *a, uint32_t n)
 /* ------------------------------------------------------------------ PUT --- */
 static int crb_size_ok(uint32_t id, uint32_t len)   /* a begin's size for this id (0: the object erased) */
 {
+    if (id == CFB_SHAPE) return !len || len == sizeof(cfsh_rec_t);
     if (id == 6u || id == 7u)
         return !len || len == sizeof(up_bank_t);
     if (id == 8u)
@@ -317,6 +322,12 @@ static uint32_t crb_commit(void)
             return 4;
         dm_restore_lock = 1;                         /* (the drum machine keeps nothing over it till the restart) */
         return 0;                                    /* (the restart loads it, stopped, as at power-on) */
+    }
+    if (id == CFB_SHAPE) {
+        if (len && !cfsh_valid((const cfsh_rec_t *)raw)) return 2;
+        if (st_save(OBJ_CFSHAPE, raw, len)) return 4;
+        cfsh_restore_lock = 1;
+        return 0;
     }
     if (id >= CFB_TWK) {                             /* a tweaked pattern sound: read in at the restart */
         const cfk_rec_t *r = (const cfk_rec_t *)raw;

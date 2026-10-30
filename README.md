@@ -1,3 +1,16 @@
+# CoralFlower + SHAYPE — WaveLoop fork
+
+Adds WaveLoop's drawn Shape Arp to CoralFlower's chord instrument, in its native interface.
+All nine original arp modes remain. **ARP → MODE: SHAYPE → ON**; SELECT turns the edit pages.
+
+- [Play/edit guide and developer integration](docs/SHAYPE.md)
+- [WaveLoop fork releases](https://github.com/ELI7VH/CoralFlower/releases)
+- [FM-1 WaveLoop porting kit](https://github.com/lucian-labs/fm1-waveloop-kits)
+
+The upstream browser/installer links below install upstream CoralFlower. For this fork use the WaveLoop release package.
+
+---
+
 # CoralFlower
 
 **Your M-VAVE FM-1, made for chords.** CoralFlower is free firmware for the FM-1. Press a chord key, and every note

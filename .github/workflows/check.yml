@@ -70,6 +70,9 @@ jobs:
           cc -std=gnu11 -O2 -Wall -Wno-unused-function -Ifirmware/src -o build/host/st_log_test tests/st_log_test.c
           build/host/st_log_test
 
+      - name: WaveLoop SHAYPE parity and integration
+        run: sh tools/test_shape.sh
+
       - name: The tracked tree is as it was
         run: |
           set -euo pipefail

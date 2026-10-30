@@ -15,6 +15,24 @@
  * each note gliding from the last chord's.
  * Included after voice.c, fx.c, usb.c, cf_theory.c, cf_chord.c (coralflower.c, the emulator's unit). */
 
+/* WaveLoop SHAYPE core: pure pattern logic; CoralFlower owns timing and voices. */
+#include "arp_shape.c"
+typedef struct {
+    arp_pat_t pat;
+    uint8_t steps, dir, bound, preset, attach;
+    int8_t root;                       /* -1: the chord as played */
+} cf_shape_t;
+static cf_shape_t cfsh, cfp_shape;
+static void cfsh_defaults(cf_shape_t *s)
+{
+    memset(s, 0, sizeof *s);
+    ash_load(&s->pat, 0);
+    s->steps = ARP_FACTORY[0].steps;
+    s->dir = AD_WYNDO;
+    s->attach = AA_NOTE;
+    s->root = -1;
+}
+
 enum { CF_RT_WAIT = 0, CF_RT_STRIKE = 1, CF_RT_MOVE = 2, CF_RT_CHORD = 3, CF_NRT };   /* RETRIG (stored: 0 and 1
                                                                                     * were Off and On) */
 
@@ -411,6 +429,9 @@ static int cfp_holds(uint32_t part, uint32_t note)
     }
     if (cfa_k.on) {                                  /* (the keys' arpeggiator's notes: the ones that sound; cfa_k by
                                                       * name: a sequencer's may be the one in hand) */
+        for (i = 0; i < ARP_ROWS; i++)
+            if (cfa_k.shleft[i] && cfa_k.shnote[i] == note)
+                return 1;
         if (cfa_k.cur == note)
             return 1;
         for (i = 0; i < cfa_k.sn; i++)

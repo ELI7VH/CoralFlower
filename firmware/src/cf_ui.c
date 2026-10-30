@@ -55,6 +55,7 @@ static void cf_send_config(void)                 /* the chord settings -> the au
     cfp_cfg.in_ch = (uint8_t)(cs.in_ch > CF_INCH_ALL ? cs.in_ch - CF_INCH_ALL : 0u);
     cfp_cfg.arp_on = sq_keys_arp();              /* (a track open: the keys play as it plays, its own ARP) */
     cfp_cfg.arp = cs.arp;
+    cfp_shape = cfsh;
     cfp_cfg.bpm = cs.bpm;
     cfp_cfg.clock_in = cs.clock_in == 1u;
     cfp_cfg.clock_out = cs.clock_in == 2u;
@@ -82,11 +83,61 @@ static int wrapi(int v, int n) { return ((v % n) + n) % n; }
 
 /* the arpeggiator's names: a knob cell's (7 characters at most), the screen's title */
 static const char *const CF_ARP_SHORT[CF_ARP_NMODES] = {"Up", "Down", "Incl", "Excl", "Random", "Order", "Repeat",
-                                                        "Strum\x84", "Strum\x85"};
+                                                        "Strum\x84", "Strum\x85", "SHAYPE"};
 static const char *const CF_ARP_NAME[CF_ARP_NMODES] = {"Up", "Down", "Inclusive", "Exclusive", "Random", "Order",
-                                                       "Repeat", "Strum up", "Strum down"};
+                                                       "Repeat", "Strum up", "Strum down", "SHAYPE"};
 static const char *const CF_ARP_RATE[CF_ARP_NRATES] = {"1/1", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T",
                                                        "1/32"};
+
+/* SHAYPE editor: each cell can hold a note, edited with CoralFlower's four knobs. */
+static uint8_t cfsh_step, cfsh_row, cfsh_len = 1;
+static const char *const CFSH_DIR[] = {"Up", "Down", "Pend", "Random", "Wyndo", "Shyft"};
+static const char *const CFSH_ATT[] = {"Now", "Note", "Cycle"};
+static int cfsh_cell(void)
+{
+    uint32_t i;
+    for (i = 0; i < cfsh.pat.n; i++)
+        if (ARP_STEP(cfsh.pat.note[i]) == cfsh_step && ARP_ROW(cfsh.pat.note[i]) == cfsh_row) return (int)i;
+    return -1;
+}
+static void cfsh_knob(uint32_t k, int d)
+{
+    uint32_t page = cu.page[SCR_ARP];
+    int at = cfsh_cell();
+    if (page == 2) {
+        if (k == 0) {
+            cfsh.preset = (uint8_t)clampi(cfsh.preset + d, 0, ARP_NFACTORY - 1);
+            ash_load(&cfsh.pat, cfsh.preset);
+            cfsh.steps = ARP_FACTORY[cfsh.preset].steps;
+            cfsh.bound = ARP_FACTORY[cfsh.preset].bound;
+            cfsh_step = 0;
+        } else if (k == 1) {
+            cfsh.steps = (uint8_t)clampi(cfsh.steps + d, 1, ARP_STEPS);
+            if (cfsh_step >= cfsh.steps) cfsh_step = cfsh.steps - 1u;
+        } else if (k == 2) cfsh.dir = (uint8_t)clampi(cfsh.dir + d, 0, AD_SHYFT);
+        else cfsh.bound = (uint8_t)(d > 0);
+    } else if (page == 3) {
+        if (k < 2) {
+            if (!k) cfsh_step = (uint8_t)clampi(cfsh_step + d, 0, cfsh.steps - 1u);
+            else cfsh_row = (uint8_t)clampi(cfsh_row + d, 0, ARP_ROWS - 1u);
+            at = cfsh_cell();
+            cfsh_len = at >= 0 ? ARP_LEN(cfsh.pat.note[at]) : 1u;
+        } else if (k == 2) {
+            cfsh_len = (uint8_t)clampi(cfsh_len + d, 1, ARP_STEPS);
+            if (at >= 0) cfsh.pat.note[at] = ARP_NOTE(cfsh_step, cfsh_row, cfsh_len);
+        } else if (d > 0 && at < 0) {
+            if (cfsh.pat.n < ARP_NMAX) cfsh.pat.note[cfsh.pat.n++] = ARP_NOTE(cfsh_step, cfsh_row, cfsh_len);
+            else cf_message("Pattern full: 62 notes");
+        } else if (d < 0 && at >= 0) {
+            uint32_t i;
+            for (i = (uint32_t)at; i + 1u < cfsh.pat.n; i++) cfsh.pat.note[i] = cfsh.pat.note[i + 1u];
+            cfsh.pat.note[--cfsh.pat.n] = 0;
+        }
+    } else if (page == 4) {
+        if (!k) cfsh.root = (int8_t)clampi(cfsh.root + d, -1, 127);
+        else if (k == 1) cfsh.attach = (uint8_t)clampi(cfsh.attach + d, AA_NOW, AA_CYCLE);
+    }
+}
 
 /* ------------------------------------------------------------ spelling --- */
 static cf_spell_t cu_spell;
@@ -281,7 +332,27 @@ static void ui_knob_info(int k, cf_knob_t *o)
         break;
     }
     case SCR_ARP:
-        if (cu.page[SCR_ARP] == 0) {             /* Pattern: ON/OFF MODE OCTAVE RATE */
+        if (cu.page[SCR_ARP] == 2) {
+            switch (k) {
+            case 0: kfmt(o->name, 12, "PRESET"); kfmt(o->val, 14, ARP_FACTORY[cfsh.preset].name); break;
+            case 1: kfmt(o->name, 12, "STEPS"); kint(o->val, cfsh.steps, 0); break;
+            case 2: kfmt(o->name, 12, "DIR"); kfmt(o->val, 14, CFSH_DIR[cfsh.dir]); break;
+            default: kfmt(o->name, 12, "BOUND"); kfmt(o->val, 14, cfsh.bound ? "Octave" : "Wrap"); break;
+            }
+        } else if (cu.page[SCR_ARP] == 3) {
+            switch (k) {
+            case 0: kfmt(o->name, 12, "STEP"); kint(o->val, cfsh_step + 1u, 0); break;
+            case 1: kfmt(o->name, 12, "ROW"); kint(o->val, cfsh_row + 1u, 0); break;
+            case 2: kfmt(o->name, 12, "LENGTH"); kint(o->val, cfsh_len, 0); break;
+            default: kfmt(o->name, 12, "NOTE"); kfmt(o->val, 14, cfsh_cell() >= 0 ? "On" : "Off"); break;
+            }
+        } else if (cu.page[SCR_ARP] == 4) {
+            if (!k) {
+                kfmt(o->name, 12, "ROOT");
+                if (cfsh.root < 0) kfmt(o->val, 14, "Played"); else kint(o->val, cfsh.root, 0);
+            } else if (k == 1) { kfmt(o->name, 12, "ATTACH"); kfmt(o->val, 14, CFSH_ATT[cfsh.attach]); }
+            else { kfmt(o->name, 12, k == 2 ? "POLY" : "SAVE"); kfmt(o->val, 14, k == 2 ? "8 notes" : "Auto/quiet"); o->dis = 1; }
+        } else if (cu.page[SCR_ARP] == 0) {             /* Pattern: ON/OFF MODE OCTAVE RATE */
             switch (k) {
             case 0: kfmt(o->name, 12, "ON/OFF"); kfmt(o->val, 14, cu.arp_on ? "On" : "Off"); break;
             case 1: kfmt(o->name, 12, "MODE"); kfmt(o->val, 14, CF_ARP_SHORT[cs.arp.mode % CF_ARP_NMODES]); break;
@@ -508,7 +579,8 @@ static void ui_knob_turn(int k, int d)
         break;
     }
     case SCR_ARP:
-        if (cu.page[SCR_ARP] == 0) {
+        if (cu.page[SCR_ARP] >= 2) cfsh_knob(k, d);
+        else if (cu.page[SCR_ARP] == 0) {
             if (k == 0)
                 cu.arp_on = (uint8_t)(d > 0);
             else if (k == 1)
@@ -637,7 +709,7 @@ static uint32_t screen_pages(uint32_t scr)
     if (scr == SCR_ENV)
         return 3u;                               /* chord + bass, chord, bass */
     if (scr == SCR_ARP)
-        return 2u;                               /* Pattern, Feel */
+        return cs.arp.mode == CF_ARP_SHAYPE ? 5u : 2u; /* Pattern, Feel, Shape, Draw, Attach */
     if (scr == SCR_SAVE)
         return CF_SAVE_NPG;                      /* the chord's sound, the bass's, the LAYER's (a pattern's copy: OCT+
                                                   * held on the SEQUENCER, cf_sequi.c) */
@@ -1786,6 +1858,7 @@ static void cf_ui_init(void)
 {
     if (!cfs_loaded)                             /* (cf_splash read the settings record: they stay) */
         cs_defaults(&cs);
+    cfsh_load();
     cu.scr = SCR_HOME;
     cu.sel_btn = sel_first();
     cf_led_init();

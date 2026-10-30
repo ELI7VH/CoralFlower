@@ -182,6 +182,7 @@ static uint32_t make_loop(uint32_t nev, int sorted)
     return len;
 }
 
+#ifndef CF_TEST_EMBED
 int main(void)
 {
     uint32_t n, i, k;
@@ -208,7 +209,7 @@ int main(void)
     CHECK(a && a[1] == 5, "GET before LIST: 5");
 
     /* ---- a fresh device: the 8 objects, nothing stored but what the boot wrote ---- */
-    CHECK(t_list() == 0 && nman == 26, "LIST on a fresh flash: 26 objects (%u)", nman);
+    CHECK(t_list() == 0 && nman == 27, "LIST on a fresh flash: 27 objects (%u)", nman);
     CHECK(t_find(50) && !t_find(50)->size && t_find(55) && !t_find(55)->size, "LIST: no patterns stored yet");
 
     /* ---- content: a user sound, the settings, a loop ---- */
@@ -463,3 +464,5 @@ int main(void)
     printf("cf_backup_test: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }
+
+#endif /* CF_TEST_EMBED */
