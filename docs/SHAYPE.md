@@ -114,3 +114,9 @@ Validation: core parity, **1,854 integration/timing checks**, 134 backup checks 
 pass. Checks cover all rate pairs with swing, labels/menu ordering, exact 64th durations,
 MIDI pulse anchoring/interpolation/fallback and the unchanged native 24 PPQN grid. Target build
 guards pass. These timing checks do not establish CPU headroom for every sound/pattern combination.
+
+Installed/reboot/readback-verified on TEST as **0.6.1-wlshape2**, source `0d0d5a7`.
+All 27 current song/settings objects match its fresh pre-update backup exactly; no restore was needed.
+TEST is stopped. SHOW remains chain14 and GHOUL is unchanged. Physical listening of the new rates remains with the user.
+
+![1/64T on CoralFlower's native RATE control, emulator render](images/shaype-64t.png)
