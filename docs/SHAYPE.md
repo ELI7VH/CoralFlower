@@ -78,3 +78,20 @@ CoralFlower: **FicusFicusov and contributors**; ChoralRoot: **Quixotic7 and cont
 Felucca: **Leo Kuroshita / Hügelton Instruments**; FM engine: **Kerem Kilic / Melodee**;
 Departure Mono: **Helena Zhang**. Original source headers and GPL-3.0-only licensing are retained.
 See the root README and LICENSING.md for all dependency notices.
+
+## Hardware check — 2026-10-30
+
+Installed on FM1-TEST as `CoralFlower 0.6.1-wlshape1` from source `5158020`.
+The installer rejected a direct Switch Blade transition; official V15 was installed first,
+then the fork, without a force override. The prior Switch Blade music/raw storage was backed up first.
+
+Enabled SHAYPE through validated native settings restore (only mode, on/off and checksum changed),
+restored its default pattern as object 68, and restarted. Both records read back exactly; the backup
+lists 27 objects. Controlled real MIDI input produced 16 chord note-ons in eight polyphonic pairs,
+then no further note-ons after release. A separate six-second play window added zero late buffers,
+voice sheds or steals (CPU meter 43% during that one organ chord). Two earlier late-buffer counts
+were present before that window; their cause was not isolated. This is a limited smoke check,
+not a CPU stress guarantee. The agent did not physically listen to the device.
+
+TEST is left stopped, SHAYPE selected/enabled, with no keys held. SHOW remains Switch Blade chain14;
+GHOUL was untouched. Screens above are emulator renders; no hardware screenshot claim is made.
