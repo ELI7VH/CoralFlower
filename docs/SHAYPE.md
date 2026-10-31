@@ -132,12 +132,19 @@ TEST is stopped. SHOW remains chain14 and GHOUL is unchanged. Physical listening
 
 ## Transport and step strum — wlshape3
 
-Optional transport-cycle lock and the two compound modes above are built for TEST next.
+Optional transport-cycle lock and the two compound modes above are installed on TEST.
 Validation: donor parity, 134 backup checks, 1,854 existing integration/timing checks, and **2,716 new
 transport/strum/migration checks** pass. The new suite also passes focused UBSan with the existing DSP
 exclusions (signed overflow, shifts, bounds/object-size and pointer overflow). It covers every rate and swing,
 late chord joins/pass offsets, stop/restart/latch, ordered MIDI attacks, pending-note cancellation, GAP limits,
 and checksummed WHS1 backup restore/migration. Target build guards pass; native emulator controls inspected.
-Hardware installation, timing and listening for wlshape3 are pending; TEST remains wlshape2 until confirmed.
+Installed/reboot/readback-verified on TEST as **0.6.1-wlshape3**, source `af50798`.
+A fresh 27-object backup was archived first. All 26 native song/settings objects remain byte-identical;
+SHAYPE migrated to WHS2 with all 132 original data bytes preserved and Sync = Free.
+Controlled target MIDI in each compound mode produced 17 chord attacks, including eight correctly
+ordered strum pairs, zero attacks while stopped, and zero attacks after Stop's 40 ms grace period.
+Temporary test settings/pattern were restored; all 27 current objects read back exactly. TEST is stopped,
+with the user's previous settings retained. SHOW stays chain14; GHOUL is untouched. These checks establish
+target MIDI behavior; physical listening and broad CPU/headroom testing remain separate.
 
 ![Transport sync and strum gap, native emulator render](images/shaype-sync-strum.png)
