@@ -636,7 +636,9 @@ static void cfk_flush(void)
 }
 
 /* SHAYPE is a separate versioned A/B object. The upstream settings log stays byte-compatible. */
-#define CFSH_MAGIC 0x31534857u             /* WHS1 */
+#define CFSH_MAGIC 0x32534857u             /* WHS2 */
+#define CFSH_OLD_MAGIC 0x31534857u
+#define CFSH_OLD_BYTES 132u
 typedef struct { uint32_t magic, check; cf_shape_t s; } cfsh_rec_t;
 static uint32_t cfsh_saved, cfsh_seen, cfsh_changed, cfsh_retry;
 static uint8_t cfsh_restore_lock;
@@ -645,18 +647,36 @@ static int cfsh_valid(const cfsh_rec_t *r)
     uint32_t i;
     if (r->magic != CFSH_MAGIC || r->check != cfs_fnv(&r->s, sizeof r->s) ||
         !r->s.steps || r->s.steps > ARP_STEPS || r->s.dir > AD_SHYFT || r->s.bound > AB_OCT ||
-        r->s.attach > AA_CYCLE || r->s.root < -1 || r->s.preset >= ARP_NFACTORY || r->s.pat.n > ARP_NMAX)
+        r->s.attach > AA_CYCLE || r->s.sync > 1u || r->s.root < -1 || r->s.preset >= ARP_NFACTORY || r->s.pat.n > ARP_NMAX)
         return 0;
     for (i = 0; i < r->s.pat.n; i++)
         if (r->s.pat.note[i] & 0x8000u) return 0;
     return 1;
 }
+static int cfsh_import(cf_shape_t *out, const void *raw, uint32_t len)
+{
+    const cfsh_rec_t *r = (const cfsh_rec_t *)raw;
+    if (len == sizeof *r && cfsh_valid(r)) { *out = r->s; return 1; }
+    if (len == CFSH_OLD_BYTES + 8u && r->magic == CFSH_OLD_MAGIC &&
+        r->check == cfs_fnv(&r->s, CFSH_OLD_BYTES)) {
+        cfsh_rec_t migrated;
+        memset(&migrated, 0, sizeof migrated);
+        migrated.magic = CFSH_MAGIC;
+        memcpy(&migrated.s, &r->s, CFSH_OLD_BYTES);
+        migrated.check = cfs_fnv(&migrated.s, sizeof migrated.s);
+        if (!cfsh_valid(&migrated)) return 0;
+        *out = migrated.s; return 2;
+    }
+    return 0;
+}
 static void cfsh_load(void)
 {
-    cfsh_rec_t r;
+    cfsh_rec_t r; int imported = 0, n;
     cfsh_defaults(&cfsh);
-    if (!cr_safe && st_load(OBJ_CFSHAPE, &r, sizeof r) == sizeof r && cfsh_valid(&r)) cfsh = r.s;
+    if (!cr_safe && (n = st_load(OBJ_CFSHAPE, &r, sizeof r)) > 0)
+        imported = cfsh_import(&cfsh, &r, (uint32_t)n);
     cfsh_saved = cfsh_seen = cfs_fnv(&cfsh, sizeof cfsh);
+    if (imported == 2) cfsh_saved = 0;  /* migrate old records only through the existing quiet save path */
 }
 static int cfsh_write(void)
 {

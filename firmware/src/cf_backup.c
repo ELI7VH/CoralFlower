@@ -261,7 +261,7 @@ static void crb_get(const uint8_t *a, uint32_t n)
 /* ------------------------------------------------------------------ PUT --- */
 static int crb_size_ok(uint32_t id, uint32_t len)   /* a begin's size for this id (0: the object erased) */
 {
-    if (id == CFB_SHAPE) return !len || len == sizeof(cfsh_rec_t);
+    if (id == CFB_SHAPE) return !len || len == sizeof(cfsh_rec_t) || len == CFSH_OLD_BYTES + 8u;
     if (id == 6u || id == 7u)
         return !len || len == sizeof(up_bank_t);
     if (id == 8u)
@@ -324,7 +324,8 @@ static uint32_t crb_commit(void)
         return 0;                                    /* (the restart loads it, stopped, as at power-on) */
     }
     if (id == CFB_SHAPE) {
-        if (len && !cfsh_valid((const cfsh_rec_t *)raw)) return 2;
+        cf_shape_t check;
+        if (len && !cfsh_import(&check, raw, len)) return 2;
         if (st_save(OBJ_CFSHAPE, raw, len)) return 4;
         cfsh_restore_lock = 1;
         return 0;

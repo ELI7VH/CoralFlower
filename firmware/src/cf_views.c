@@ -1278,7 +1278,7 @@ static void view_shape(int x0)
 }
 static void view_arp(int x0)
 {
-    if (cs.arp.mode == CF_ARP_SHAYPE) { view_shape(x0); return; }
+    if (CF_ARP_IS_SHAPE(cs.arp.mode)) { view_shape(x0); return; }
     const int mode = cs.arp.mode % CF_ARP_NMODES, run = cf_sn.arp_on && cf_sn.arp_n;
     int n, i, oc = cs.arp.oct >= 1 && cs.arp.oct <= 4 ? cs.arp.oct : 1, len, lo = 127, hi = 0, sw = 12;
     int xa = x0 + 12, yt = VIEW_Y + 2, h = 40, cur = run ? (int)((cf_sn.arp_idx + 15u) % 16u) : -1;

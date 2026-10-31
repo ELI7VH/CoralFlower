@@ -14,7 +14,8 @@
  * BPM, a 64-bit count: no drift). */
 
 enum { CF_ARP_UP, CF_ARP_DOWN, CF_ARP_INC, CF_ARP_EXC, CF_ARP_RAND, CF_ARP_ORDER, CF_ARP_REPEAT, CF_ARP_STRUM_UP,
-       CF_ARP_STRUM_DOWN, CF_ARP_SHAYPE, CF_ARP_NMODES };
+       CF_ARP_STRUM_DOWN, CF_ARP_SHAYPE, CF_ARP_SHAPE_UP, CF_ARP_SHAPE_DOWN, CF_ARP_NMODES };
+#define CF_ARP_IS_SHAPE(m) ((m) == CF_ARP_SHAYPE || (m) == CF_ARP_SHAPE_UP || (m) == CF_ARP_SHAPE_DOWN)
 #define CF_ARP_STRUMMING(m) ((m) == CF_ARP_STRUM_UP || (m) == CF_ARP_STRUM_DOWN)
 /* Stored IDs 0..8 retain their old meanings; append new rates. A quarter = 96 ticks. */
 static const uint16_t CF_ARP_UNITS[] = {384, 192, 96, 64, 48, 32, 24, 16, 12,
@@ -56,7 +57,9 @@ typedef struct {
     uint32_t next96, gen;
     uint8_t locked;
     uint8_t shnote[ARP_ROWS], shheld[CF_MAX_NOTES], shn, shrelease, rate, swing;
-    uint32_t shleft[ARP_ROWS];
+    uint32_t shleft[ARP_ROWS], shdelay[ARP_ROWS];
+    uint32_t shpass;
+    uint8_t sync;
     int32_t shofs;
 
 } cfa_t;
@@ -141,12 +144,13 @@ static void cfa_strum_off(void)
 static void cfa_shape_off(void)
 {
     uint32_t i;
-    for (i = 0; i < ARP_ROWS; i++)
-        if (cfa.shleft[i]) {
+    for (i = 0; i < ARP_ROWS; i++) {
+        if (cfa.shleft[i] && !cfa.shdelay[i]) {
             if (cfa_at == &cfa_k) cfp_off(cfa_part(), cfa.shnote[i]);
             else sqp_off(cfa_part(), cfa.shnote[i]);
-            cfa.shleft[i] = 0;
         }
+        cfa.shleft[i] = cfa.shdelay[i] = 0;
+    }
 }
 static void cfa_stop(void)                           /* everything the arpeggiator plays lets go */
 {
@@ -211,27 +215,47 @@ static uint32_t cfa_shape_random(void)
 static void cfa_shape_step(uint64_t len)
 {
     uint8_t pitch[ARP_ROWS], length[ARP_ROWS];
-    uint32_t step = cfa.idx % cfp_shape.steps, i, j, k, t;
+    uint32_t step = cfa.idx % cfp_shape.steps, pass = cfa.idx / cfp_shape.steps, i, j, k, t, gap = 0;
+    int fresh = !cfa.shn, changed = fresh || pass != cfa.shpass;
     uint32_t g = cfp_cfg.arp.gate, st = cfa_div64(len, cfa_bpm() * 9600u);
-    if (cfa.shrelease && (cfp_shape.attach != AA_CYCLE || !step)) {
+    if (cfa.shrelease && (cfp_shape.attach != AA_CYCLE || !step || (!fresh && changed))) {
         cfa.shrelease = 2;                /* finish active gates without starting another pass */
         return;
     }
-    if (!cfa.shn || cfp_shape.attach != AA_CYCLE || !step)
+    if (fresh || cfp_shape.attach != AA_CYCLE || changed)
         cfa.shn = (uint8_t)ash_voicing(cfa.note, cfa.n, cfp_shape.root, cfa.shheld);
-    if (!step)
-        cfa.shofs = ash_offset(&cfp_shape.pat, cfp_shape.steps, cfa.idx / cfp_shape.steps,
+    if (changed) {
+        cfa.shofs = ash_offset(&cfp_shape.pat, cfp_shape.steps, pass,
                               cfa.shn, cfp_shape.dir, cfa_shape_random);
+        cfa.shpass = pass;
+    }
     k = ash_events(&cfp_shape.pat, step, cfa.shheld, cfa.shn, cfa.shofs,
                    ash_bound(cfp_shape.dir, cfp_shape.bound), pitch, length);
+    if (cfp_cfg.arp.mode == CF_ARP_SHAPE_UP || cfp_cfg.arp.mode == CF_ARP_SHAPE_DOWN) {
+        int down = cfp_cfg.arp.mode == CF_ARP_SHAPE_DOWN;
+        for (i = 1; i < k; i++) {
+            uint8_t nt = pitch[i], ln = length[i];
+            for (j = i; j && (down ? pitch[j-1] < nt : pitch[j-1] > nt); j--) {
+                pitch[j] = pitch[j-1]; length[j] = length[j-1];
+            }
+            pitch[j] = nt; length[j] = ln;
+        }
+        if (k > 1u) {
+            uint32_t cap = st ? (st-1u)/k : 0u;
+            gap = (uint32_t)cfp_cfg.arp.strum_ms * FS / 1000u;
+            if (gap > cap) gap = cap;  /* every onset remains inside its source step */
+        }
+    }
     cfa.idx++;
     for (i = 0; i < k; i++) {
         uint32_t nt = pitch[i] + 12u * (cfp_cfg.arp.oct - 1u), samples;
         if (nt > 127u) continue;
         for (j = 0; j < ARP_ROWS; j++)
             if (cfa.shleft[j] && cfa.shnote[j] == nt) {
-                if (cfa_at == &cfa_k) cfp_off(cfa_part(), nt); else sqp_off(cfa_part(), nt);
-                cfa.shleft[j] = 0;
+                if (!cfa.shdelay[j]) {
+                    if (cfa_at == &cfa_k) cfp_off(cfa_part(), nt); else sqp_off(cfa_part(), nt);
+                }
+                cfa.shleft[j] = cfa.shdelay[j] = 0;
                 break;
             }
         if (j == ARP_ROWS)
@@ -243,14 +267,15 @@ static void cfa_shape_step(uint64_t len)
         samples = samples / 100u * g + samples % 100u * g / 100u;
         cfa.shnote[j] = (uint8_t)nt;
         cfa.shleft[j] = samples ? samples : 1u;
-        cfa_play(nt);
+        cfa.shdelay[j] = gap * i;
+        if (!cfa.shdelay[j]) cfa_play(nt);
     }
 }
 
 static void cfa_step_n(uint64_t len)
 {
     int nt;
-    if (cfp_cfg.arp.mode == CF_ARP_SHAYPE) { cfa_shape_step(len); return; }
+    if (CF_ARP_IS_SHAPE(cfp_cfg.arp.mode)) { cfa_shape_step(len); return; }
     nt = cfa_pick(cfa.idx);
     uint32_t g = cfp_cfg.arp.gate >= 20u && cfp_cfg.arp.gate <= 100u ? cfp_cfg.arp.gate : 70u;
     cfa_note_off();
@@ -278,6 +303,31 @@ static void cfa_lock_from(uint32_t g)
     cfa.next96 = nx;
     cfa.gen = cf_grid.gen;
     cfa.locked = 1;
+}
+
+static int cfa_transport_lock(void) { return cfp_shape.sync && CF_ARP_IS_SHAPE(cfp_cfg.arp.mode); }
+static uint32_t cfa_transport_pos(uint32_t tick)
+{
+    uint32_t pair = cfa_pair();
+    return 2u * (tick / pair) + (tick % pair >= cfa_second());
+}
+static void cfa_transport_tick(void)
+{
+    uint32_t g = cf_grid.g96 >= 96u ? cf_grid.g96 - 96u : 0u;
+    if (!cfa.locked || cfa.gen != cf_grid.gen || cfa.rate != cfp_cfg.arp.rate || cfa.swing != cfp_cfg.arp.swing) {
+        uint32_t pair = cfa_pair(), pos = cfa_transport_pos(g), rem = g % pair;
+        cfa_shape_off(); cfa.shn = 0;
+        cfa.idx = pos;
+        cfa.next96 = (rem == 0u || rem == cfa_second()) ? g : cfa_next_place(g);
+        cfa.gen = cf_grid.gen; cfa.locked = 1;
+        cfa.rate = cfp_cfg.arp.rate; cfa.swing = cfp_cfg.arp.swing;
+    }
+    if (g >= cfa.next96) {
+        uint32_t nx = cfa_next_place(g);
+        cfa.idx = cfa_transport_pos(g);  /* late callbacks skip to the actual phase; never accumulate a cycle error */
+        cfa_step_n((uint64_t)(nx - g) * FS * 60u * 100u);
+        cfa.next96 = nx;
+    }
 }
 
 /* a new chord for Strum: its notes low to high (or high to low) over OCTAVE octaves, the first at once */
@@ -308,7 +358,7 @@ static int cfa_chord(const cf_chord_out_t *o, int m)
     if (!cfa.on)
         return 0;
     if (cfa.mode != cfp_cfg.arp.mode &&
-        (cfa.mode == CF_ARP_SHAYPE || cfp_cfg.arp.mode == CF_ARP_SHAYPE ||
+        (CF_ARP_IS_SHAPE(cfa.mode) || CF_ARP_IS_SHAPE(cfp_cfg.arp.mode) ||
          CF_ARP_STRUMMING(cfa.mode) != CF_ARP_STRUMMING(cfp_cfg.arp.mode))) {
         cfa_note_off(); cfa_shape_off(); cfa_strum_off();
         cfa.n = cfa.shn = cfa.shrelease = 0;
@@ -318,7 +368,8 @@ static int cfa_chord(const cf_chord_out_t *o, int m)
             cfa.latched = 1;
             return 1;
         }
-        if (cfp_cfg.arp.mode == CF_ARP_SHAYPE && cfa.n && cfp_shape.attach != AA_NOW) {
+        if (cfa_transport_lock() && !cf_grid.transport) { cfa_stop(); return 1; }
+        if (CF_ARP_IS_SHAPE(cfp_cfg.arp.mode) && cfa.n && cfp_shape.attach != AA_NOW) {
             cfa.shrelease = 1;
             return 1;
         }
@@ -359,7 +410,10 @@ static int cfa_chord(const cf_chord_out_t *o, int m)
     } else if (fresh) {                              /* from silence: its first note now (locked: then on the beat) */
         cfa.idx = 0;
         cfa.acc = 0;
-        if (cf_grid.on) {
+        cfa.sync = (uint8_t)cfa_transport_lock();
+        if (cfa_transport_lock()) {
+            cfa.locked = 0; cfa.shn = 0;  /* the next audio tick joins the shared transport phase */
+        } else if (cf_grid.on) {
             cfa_lock_from(cf_grid.g96);
             cfa_step_n((uint64_t)(cfa.next96 - cf_grid.g96) * FS * 60u * 100u);
         } else {
@@ -367,10 +421,10 @@ static int cfa_chord(const cf_chord_out_t *o, int m)
             cfa_step();
         }
     }
-    if (!fresh && cfp_cfg.arp.mode == CF_ARP_SHAYPE && cfp_shape.attach == AA_NOW) {
+    if (!fresh && CF_ARP_IS_SHAPE(cfp_cfg.arp.mode) && cfp_shape.attach == AA_NOW) {
         cfa_shape_off();
-        if (cfa.idx) cfa.idx--;
-        cfa_step();
+        if (cfa_transport_lock()) cfa.shn = 0;
+        else { if (cfa.idx) cfa.idx--; cfa_step(); }
     }
     cfa.mode = cfp_cfg.arp.mode;
     return 1;
@@ -379,12 +433,13 @@ static int cfa_chord(const cf_chord_out_t *o, int m)
 static void cfa_mode_sync(void)
 {
     if (CF_ARP_STRUMMING(cfp_cfg.arp.mode) != CF_ARP_STRUMMING(cfa.mode) ||
-        (cfp_cfg.arp.mode == CF_ARP_SHAYPE) != (cfa.mode == CF_ARP_SHAYPE)) {
+        (cfa.mode != cfp_cfg.arp.mode && (CF_ARP_IS_SHAPE(cfp_cfg.arp.mode) || CF_ARP_IS_SHAPE(cfa.mode)))) {
         cfa_note_off(); cfa_shape_off(); cfa_strum_off();
         cfa.shn = cfa.shrelease = 0;
         cfa.mode = cfp_cfg.arp.mode;
+        cfa.sync = (uint8_t)cfa_transport_lock();
         if (cfa.n && CF_ARP_STRUMMING(cfa.mode)) cfa_strum_start();
-        else if (cfa.n) { cfa.idx = 0; cfa.acc = 0; cfa_step(); }
+        else if (cfa.n) { cfa.idx = 0; cfa.acc = 0; if (cfa_transport_lock()) cfa.locked = 0; else cfa_step(); }
     }
 }
 
@@ -393,7 +448,19 @@ static void cfa_tick(uint32_t n)
 {
     if (!cfa.on || !cfa.n)
         return;
+    if (cfa_transport_lock() && !cf_grid.transport) {
+        cfa_note_off(); cfa_shape_off(); cfa_strum_off();
+        cfa.shn = 0; cfa.locked = 0; cfa.sync = 1;
+        return;
+    }
     cfa_mode_sync();
+    if (cfa.sync != (uint8_t)cfa_transport_lock()) {
+        cfa_shape_off(); cfa.shn = 0; cfa.locked = 0;
+        cfa.sync = (uint8_t)cfa_transport_lock();
+        if (!cfa.sync && CF_ARP_IS_SHAPE(cfp_cfg.arp.mode)) {
+            cfa.idx = 0; cfa.acc = 0; cfa_step();
+        }
+    }
     if (CF_ARP_STRUMMING(cfp_cfg.arp.mode)) {
         uint32_t gap = cfp_cfg.arp.strum_ms >= 5u ? cfp_cfg.arp.strum_ms : 40u;
         while (cfa.si < cfa.sn && (int32_t)(cf_now_ms - cfa.sdue) >= 0) {
@@ -404,15 +471,21 @@ static void cfa_tick(uint32_t n)
         }
         return;
     }
-    if (cfp_cfg.arp.mode == CF_ARP_SHAYPE) {
+    if (CF_ARP_IS_SHAPE(cfp_cfg.arp.mode)) {
         uint32_t i;
         for (i = 0; i < ARP_ROWS; i++)
             if (cfa.shleft[i]) {
-                if (cfa.shleft[i] <= n) {
+                uint32_t elapsed = n;
+                if (cfa.shdelay[i]) {
+                    if (cfa.shdelay[i] > n) { cfa.shdelay[i] -= n; continue; }
+                    elapsed = n - cfa.shdelay[i]; cfa.shdelay[i] = 0;
+                    cfa_play(cfa.shnote[i]);
+                }
+                if (cfa.shleft[i] <= elapsed) {
                     if (cfa_at == &cfa_k) cfp_off(cfa_part(), cfa.shnote[i]);
                     else sqp_off(cfa_part(), cfa.shnote[i]);
                     cfa.shleft[i] = 0;
-                } else cfa.shleft[i] -= n;
+                } else cfa.shleft[i] -= elapsed;
             }
         if (cfa.shrelease && (cfp_shape.attach != AA_CYCLE || cfa.shrelease == 2u)) {
             for (i = 0; i < ARP_ROWS && !cfa.shleft[i]; i++);
@@ -426,6 +499,7 @@ static void cfa_tick(uint32_t n)
         else
             cfa.gate_left -= n;
     }
+    if (cfa_transport_lock()) { cfa_transport_tick(); return; }
     if (cfa.rate != cfp_cfg.arp.rate || cfa.swing != cfp_cfg.arp.swing) {
         cfa.rate = cfp_cfg.arp.rate;
         cfa.swing = cfp_cfg.arp.swing;

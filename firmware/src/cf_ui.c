@@ -83,9 +83,9 @@ static int wrapi(int v, int n) { return ((v % n) + n) % n; }
 
 /* the arpeggiator's names: a knob cell's (7 characters at most), the screen's title */
 static const char *const CF_ARP_SHORT[CF_ARP_NMODES] = {"Up", "Down", "Incl", "Excl", "Random", "Order", "Repeat",
-                                                        "Strum\x84", "Strum\x85", "SHAYPE"};
+                                                        "Strum\x84", "Strum\x85", "SHAYPE", "SHY>Up", "SHY>Dn"};
 static const char *const CF_ARP_NAME[CF_ARP_NMODES] = {"Up", "Down", "Inclusive", "Exclusive", "Random", "Order",
-                                                       "Repeat", "Strum up", "Strum down", "SHAYPE"};
+                                                       "Repeat", "Strum up", "Strum down", "SHAYPE", "SHAYPE > Up", "SHAYPE > Down"};
 static const char *const CF_ARP_RATE[CF_ARP_NRATES] = {"1/1", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T",
                                                        "1/32", "1/1T", "1/2T", "1/32T", "1/64", "1/64T",
                                                        "1/1D", "1/2D", "1/4D", "1/8D", "1/16D", "1/32D", "1/64D"};
@@ -137,6 +137,8 @@ static void cfsh_knob(uint32_t k, int d)
     } else if (page == 4) {
         if (!k) cfsh.root = (int8_t)clampi(cfsh.root + d, -1, 127);
         else if (k == 1) cfsh.attach = (uint8_t)clampi(cfsh.attach + d, AA_NOW, AA_CYCLE);
+        else if (k == 2) cfsh.sync = (uint8_t)(d > 0);
+        else if (k == 3 && (cs.arp.mode == CF_ARP_SHAPE_UP || cs.arp.mode == CF_ARP_SHAPE_DOWN)) cs.arp.strum_ms = (uint8_t)clampi(cs.arp.strum_ms + d * (cs.arp.strum_ms < 40 ? 1 : 5), 5, 250);
     }
 }
 
@@ -352,7 +354,9 @@ static void ui_knob_info(int k, cf_knob_t *o)
                 kfmt(o->name, 12, "ROOT");
                 if (cfsh.root < 0) kfmt(o->val, 14, "Played"); else kint(o->val, cfsh.root, 0);
             } else if (k == 1) { kfmt(o->name, 12, "ATTACH"); kfmt(o->val, 14, CFSH_ATT[cfsh.attach]); }
-            else { kfmt(o->name, 12, k == 2 ? "POLY" : "SAVE"); kfmt(o->val, 14, k == 2 ? "8 notes" : "Auto/quiet"); o->dis = 1; }
+            else if (k == 2) { kfmt(o->name, 12, "SYNC"); kfmt(o->val, 14, cfsh.sync ? "Transport" : "Free"); }
+            else { kfmt(o->name, 12, "GAP"); kint(o->val, cs.arp.strum_ms, " ms");
+                o->dis = cs.arp.mode != CF_ARP_SHAPE_UP && cs.arp.mode != CF_ARP_SHAPE_DOWN; }
         } else if (cu.page[SCR_ARP] == 0) {             /* Pattern: ON/OFF MODE OCTAVE RATE */
             switch (k) {
             case 0: kfmt(o->name, 12, "ON/OFF"); kfmt(o->val, 14, cu.arp_on ? "On" : "Off"); break;
@@ -710,7 +714,7 @@ static uint32_t screen_pages(uint32_t scr)
     if (scr == SCR_ENV)
         return 3u;                               /* chord + bass, chord, bass */
     if (scr == SCR_ARP)
-        return cs.arp.mode == CF_ARP_SHAYPE ? 5u : 2u; /* Pattern, Feel, Shape, Draw, Attach */
+        return CF_ARP_IS_SHAPE(cs.arp.mode) ? 5u : 2u; /* Pattern, Feel, Shape, Draw, Attach */
     if (scr == SCR_SAVE)
         return CF_SAVE_NPG;                      /* the chord's sound, the bass's, the LAYER's (a pattern's copy: OCT+
                                                   * held on the SEQUENCER, cf_sequi.c) */

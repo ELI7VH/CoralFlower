@@ -306,6 +306,7 @@ static struct {
 static void cfm_tick(uint32_t n, uint32_t pulses)
 {
     uint32_t k;
+    cf_grid.transport = cfm.running;
     if (!cfm.on && !cfm.running) {
         cf_grid.on = 0;
         return;

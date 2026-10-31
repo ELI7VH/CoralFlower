@@ -108,7 +108,7 @@ static int sqp_holds(uint32_t part, uint32_t note)
         const cfa_t *a = &cfa_sq[part == 2u];
         if (a->on && a->n) {
             for (i = 0; i < ARP_ROWS; i++)
-                if (a->shleft[i] && a->shnote[i] == note) return 1;
+                if (a->shleft[i] && !a->shdelay[i] && a->shnote[i] == note) return 1;
             if (a->cur == note)
                 return 1;
             for (i = 0; i < a->sn; i++)

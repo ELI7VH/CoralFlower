@@ -21,6 +21,7 @@ typedef struct {
     arp_pat_t pat;
     uint8_t steps, dir, bound, preset, attach;
     int8_t root;                       /* -1: the chord as played */
+    uint8_t sync, rsv[3];              /* 0 old/free behavior; 1 transport-cycle lock */
 } cf_shape_t;
 static cf_shape_t cfsh, cfp_shape;
 static void cfsh_defaults(cf_shape_t *s)
@@ -91,7 +92,7 @@ typedef struct {
 
 /* the beat grid the arpeggiator locks to while the metronome's clock runs (cf_out.c cfm_tick writes it): on, where it
  * is in 1/24 beats (a MIDI clock's pulses), gen: + 1 when it starts again from beat 1 */
-static struct { uint8_t on; uint32_t g24, gen, g96; } cf_grid;
+static struct { uint8_t on, transport; uint32_t g24, gen, g96; } cf_grid;
 
 static uint32_t cf_now_ms, cf_ms_rem;                /* the engine clock: audio samples -> ms (cf_out.c) */
 static cf_chord_t cfc;                               /* the chord model: the ISR's */
@@ -430,7 +431,7 @@ static int cfp_holds(uint32_t part, uint32_t note)
     if (cfa_k.on) {                                  /* (the keys' arpeggiator's notes: the ones that sound; cfa_k by
                                                       * name: a sequencer's may be the one in hand) */
         for (i = 0; i < ARP_ROWS; i++)
-            if (cfa_k.shleft[i] && cfa_k.shnote[i] == note)
+            if (cfa_k.shleft[i] && !cfa_k.shdelay[i] && cfa_k.shnote[i] == note)
                 return 1;
         if (cfa_k.cur == note)
             return 1;
